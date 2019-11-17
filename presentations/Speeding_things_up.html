@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+  <head>
+    <title>Speeding things up</title>
+    <meta charset="utf-8" />
+    <meta name="author" content="John Trochta &amp; Dan Ovando" />
+    <meta name="date" content="2019-11-17" />
+    <link href="libs/remark-css/default.css" rel="stylesheet" />
+    <link href="libs/remark-css/default-fonts.css" rel="stylesheet" />
+  </head>
+  <body>
+    <textarea id="source">
+class: center, middle, inverse, title-slide
+
+# Speeding things up
+## FSH 507 Fall 2019
+### John Trochta &amp; Dan Ovando
+### SAFS, UW
+### 2019-11-17
+
+---
+
+class: center, middle
+
+
+
+# BIG problems...
+---
+&lt;img src="images/Levi et al 2016.png" width="1620" style="display: block; margin: auto;" /&gt;
+.footnote[From Levi et al. 2016 [doi:10.5063/F1Z899CZ](https://knb.ecoinformatics.org/view/doi:10.5063/F1Z899CZ)]
+???
+_here’s a 2 TB (that’s Terabyte) set of modeled output data from Ofir Levy et al. 2016 that models 15 environmental variables at hourly time scales for hundreds of years across a regular grid spanning a good chunk of North America_
+_There are over 400,000 individual netCDF files in the Levy et al. microclimate data set. Processing them would benefit massively from parallelization_
+
+---
+class: center, middle
+# SLOW problems...
+
+---
+class: center, middle
+&lt;video autosize: true controls&gt;
+  &lt;source src="images/Model_run.mov"&gt;
+&lt;/video&gt;
+???
+_Gotta get this video working or find some other visual. Basically bring up running thousands of simulations_
+
+---
+.pull-left[
+# In this class:
+
+What is parallelization?
+
+How does parallelization occur?
+
+Parallelizing in R with focus on `doParallel`
+
+Other tricks: `profvis`, `Rcpp`, &amp; Google Virtual Machines
+]
+
+--
+
+.pull-right[
+# By the end of class:
+
+Run code in parallel using `foreach`
+
+
+]
+
+---
+class: left, top
+# Key terms
+
+.pull-left[
+- Node: A single motherboard, with possibly multiple sockets
+
+- Processor/Socket: the silicon containing likely multiple cores
+
+- Core: the unit of computation; often has hardware support for
+
+- Pseudo-cores: can appear to the OS as multiple cores but share much functionality between other pseudo-cores on the same core
+]
+
+.pull-right[
+&lt;img src="images/sockets-cores.png" width="150%" style="display: block; margin: auto;" /&gt;
+]
+.footnote[Materials drawn from [Beyond Single-Core R](https://ljdursi.github.io/beyond-single-core-R/#/)]
+
+???
+_Can use multiple cores, multiple processes, or both_
+---
+class: left, top
+# Processes and threads:
+
+.pull-left[
+- Process: Data and code in memory
+
+- One or more **threads** of execution within a process
+
+- Threads in the same process can see most of the same memory
+
+- Processes generally cannot peer into another processes memory
+]
+.pull-right[
+&lt;img src="images/process-threads.png" width="1064" style="display: block; margin: auto;" /&gt;
+]
+
+---
+class: center, top
+
+# Why parallelism? Boils down to 3 reasons:
+
+##  1. Code too SLOW
+
+##  2. Problem too BIG
+
+##  3. Tasks too MANY
+
+&lt;img src="https://media.giphy.com/media/7XsFGzfP6WmC4/giphy.gif" style="display: block; margin: auto;" /&gt;
+???
+_Splitting the problem up onto multiple cores, or rather more computers will grant access to enough memory to run effectively_
+_One task takes reasonable amount of time, but I have to run thousands_
+_Splitting tasks may improve efficiency_
+
+---
+class: left, top
+# Rationale: Independant Computations
+.pull-left[
+- For more cores to help, there has to be something for them to do.
+
+- Find largely independent tasks to occupy them.
+
+- Example (for modelers): simulation study
+
+- No individual task runs any faster with more processors, but the workload as a whole can.
+]
+.pull-right[
+&lt;img src="images/paramstudy.png" width="1253" style="display: block; margin: auto;" /&gt;
+]
+
+---
+class: left, top
+## Rationale: Split, analyze (separately), &amp; combine
+.pull-left[
+- Parallels line of thinking in tidyverse
+
+- Can split data or tasks up between computing elements
+
+- Largely depends on data &amp; analysis types
+]
+.pull-right[
+&lt;img src="images/split-apply-combine.png" width="90%" style="display: block; margin: auto;" /&gt;
+]
+
+---
+class: left, top
+## Rationale: Split, analyze (separately), &amp; combine
+- Costs to "splitting" &amp; "combining"
+
+- These must be done in serial at initial &amp; final stages
+
+- When scaling from single to multiple machines, even more costly
+
+- Basis for Amdal's Law:
+$$
+T \approx \left ( f + \frac{1 - f}{P} \right )
+$$
+---
+class: center, top
+# Rationale: Amdal's Law
+$$
+T \approx \left ( f + \frac{1 - f}{P} \right )
+$$
+&lt;img src="Speeding_things_up_files/figure-html/unnamed-chunk-7-1.png" width="60%" style="display: block; margin: auto;" /&gt;
+
+---
+class: center, middle
+# Parallelization in R
+
+---
+class: left, top
+# R Packages for parallelization
+
+-`multicore`: use all cores on single processor, excludes Windows
+
+-`snow`: use any group of processors
+
+-`parallel`: basically merges the above 2, part of core R
+???
+_Many packages which use parallelism use one of these two, so worth understanding_
+_Both create new processes (not threads) to run on different processors; but in importantly different ways_
+
+---
+class: left, top
+# Forking in `multicore`
+.pull-left[
+- `multicore` starts new processes by forking
+
+- New processes see copy of original data, then fork new ones
+
+- Memory is NOT shared
+
+- Forking &amp; rejoining means overhead
+]
+.pull-right[
+&lt;img src="images/fork-sm.png" width="90%" style="display: block; margin: auto;" /&gt;
+]
+???
+_Not shared memory; changes in one process will not be reflected in others_
+_the copy of memory isn't made unless it has to be, and it doesn't have to be until one process or the other writes to the memory_
+_forking the processes and waiting for them to rejoin itself takes some time._
+_This overhead means that we want to launch jobs that take a significant length of time to run - much longer than the overhead_
+
+---
+class: left, top
+# Spawning in `snow`
+.pull-left[
+- `multicore` creates entirely new processes
+
+- Need to explicitly copy data &amp; functions
+
+- Can be done remotely,
+]
+.pull-right[
+&lt;img src="images/spawn-sm.png" width="90%" style="display: block; margin: auto;" /&gt;
+]
+???
+_A downside is that you need to explicitly copy over any needed data, functions._
+_But the upsides are that spawning a new process can be done on a remote machine, not just current machine. So you can in principle use entire clusters._
+_the flipside of the downside: new processes don't have any unneeded data, less total memory footprint._
+
+---
+class: left, top
+# `multicore` and `snow`
+- Simplest use of `multicore` is through
+  1. `mcparallel()` which forks a task ('task parallelism')
+  2. `mccollect()` which gets result
+  3. `mcapply()` the multicore equivalent of `lapply` ('data parallelism')
+
+- Further details &amp; examples at [Beyond Single-Core R](https://ljdursi.github.io/beyond-single-core-R/#/)]
+
+- Turn focus now to `doParallel`
+
+---
+class: left, top
+# `doParallel` package
+
+- "Parallel backend" for the `foreach` package
+
+- Acts as interface between `foreach` &amp; `parallel`
+
+- Designed to go from serial to various forms of parallel
+
+- Based on for loops for iteration
+
+???
+_The foreach package is based on another style of iterating through data - a for loop - and is designed so that one can go from serial to several forms of parallel relatively easily. There are then a number of tools one can use in the library to improve performance._
+
+---
+class: left, top
+# Working serially with `foreach`
+
+The standard R for loop looks like this:
+
+```r
+for (i in 1:3) print(sqrt(i))
+```
+
+```
+## [1] 1
+## [1] 1.414214
+## [1] 1.732051
+```
+
+The foreach operator looks similar, but returns a list of the iterations:
+
+```r
+library(foreach)
+foreach (i=1:3) %do% sqrt(i)
+```
+
+```
+## [[1]]
+## [1] 1
+## 
+## [[2]]
+## [1] 1.414214
+## 
+## [[3]]
+## [1] 1.732051
+```
+
+---
+class: left, top
+# Working serially with `foreach`
+
+
+```r
+library(foreach)
+foreach (i=1:3) %do% sqrt(i)
+```
+`foreach` creates an object &amp; `%do%` operates on the code (here just one statement,
+but it can be multiple lines between braces, as with a for loop) and the `foreach` object.
+
+---
+class: left, top
+# `foreach`  &amp;  `doParallel`
+
+Foreach works with variety of backends to distribute computation - `doParallel`, which allows snow- and
+multicore-style parallelism   
+
+Switching the above loop to parallel just requires registering a backend and using `%dopar%` rather than `%do%`:
+
+
+```r
+library(doParallel)
+registerDoParallel(3)  # use multicore-style forking
+foreach (i=1:3) %dopar% sqrt(i)
+```
+
+```
+## [[1]]
+## [1] 1
+## 
+## [[2]]
+## [1] 1.414214
+## 
+## [[3]]
+## [1] 1.732051
+```
+
+```r
+stopImplicitCluster()
+```
+
+---
+class: left, top
+# Combining results
+
+Default is to return a list, but there are numerous ways to combine results:
+
+```r
+foreach (i=1:3, .combine=c) %do% sqrt(i)
+```
+
+```
+## [1] 1.000000 1.414214 1.732051
+```
+
+```r
+foreach (i=1:3, .combine=cbind) %do% sqrt(i)
+```
+
+```
+##      result.1 result.2 result.3
+## [1,]        1 1.414214 1.732051
+```
+
+```r
+foreach (i=1:3, .combine="+") %do% sqrt(i)
+```
+
+```
+## [1] 4.146264
+```
+
+```r
+foreach (i=1:3, .multicombine=TRUE, .combine="sum") %do% sqrt(i)
+```
+
+```
+## [1] 4.146264
+```
+
+---
+class: left, top
+# Combining results
+
+Most of these are self explanatory.
+
+`multicombine` is worth mentioning: by default, `foreach` will combine
+each new item into the final result one-at-a-time.
+
+If `.multicombine=TRUE`, then you are saying that you're passing a function
+which will do the right thing even if foreach gives it a whole wack of new results as a list or vector -
+*e.g.*, a whole chunk at a time.
+
+---
+class: left, top
+# Nesting `foreach`
+
+There's one more operator: `%:%`.  This lets you compose or nest foreach objects:
+
+```r
+foreach (i=1:3, .combine="c") %:% 
+  foreach (j=1:3, .combine="c") %do% {
+    i*j
+  }
+```
+
+```
+## [1] 1 2 3 2 4 6 3 6 9
+```
+---
+class: left, top
+# Nesting `foreach`
+
+There's one more operator: `%:%`.  This lets you compose or nest foreach objects:
+
+```r
+foreach (i=1:3, .combine="c") %:% 
+  foreach (j=1:3, .combine="c") %do% {
+    i*j
+  }
+```
+
+```
+## [1] 1 2 3 2 4 6 3 6 9
+```
+    </textarea>
+<style data-target="print-only">@media screen {.remark-slide-container{display:block;}.remark-slide-scaler{box-shadow:none;}}</style>
+<script src="https://remarkjs.com/downloads/remark-latest.min.js"></script>
+<script>var slideshow = remark.create({
+"highlightStyle": "github",
+"highlightLines": true,
+"countIncrementalSlides": false
+});
+if (window.HTMLWidgets) slideshow.on('afterShowSlide', function (slide) {
+  window.dispatchEvent(new Event('resize'));
+});
+(function(d) {
+  var s = d.createElement("style"), r = d.querySelector(".remark-slide-scaler");
+  if (!r) return;
+  s.type = "text/css"; s.innerHTML = "@page {size: " + r.style.width + " " + r.style.height +"; }";
+  d.head.appendChild(s);
+})(document);
+
+(function(d) {
+  var el = d.getElementsByClassName("remark-slides-area");
+  if (!el) return;
+  var slide, slides = slideshow.getSlides(), els = el[0].children;
+  for (var i = 1; i < slides.length; i++) {
+    slide = slides[i];
+    if (slide.properties.continued === "true" || slide.properties.count === "false") {
+      els[i - 1].className += ' has-continuation';
+    }
+  }
+  var s = d.createElement("style");
+  s.type = "text/css"; s.innerHTML = "@media print { .has-continuation { display: none; } }";
+  d.head.appendChild(s);
+})(document);
+// delete the temporary CSS (for displaying all slides initially) when the user
+// starts to view slides
+(function() {
+  var deleted = false;
+  slideshow.on('beforeShowSlide', function(slide) {
+    if (deleted) return;
+    var sheets = document.styleSheets, node;
+    for (var i = 0; i < sheets.length; i++) {
+      node = sheets[i].ownerNode;
+      if (node.dataset["target"] !== "print-only") continue;
+      node.parentNode.removeChild(node);
+    }
+    deleted = true;
+  });
+})();
+// adds .remark-code-has-line-highlighted class to <pre> parent elements
+// of code chunks containing highlighted lines with class .remark-code-line-highlighted
+(function(d) {
+  const hlines = d.querySelectorAll('.remark-code-line-highlighted');
+  const preParents = [];
+  const findPreParent = function(line, p = 0) {
+    if (p > 1) return null; // traverse up no further than grandparent
+    const el = line.parentElement;
+    return el.tagName === "PRE" ? el : findPreParent(el, ++p);
+  };
+
+  for (let line of hlines) {
+    let pre = findPreParent(line);
+    if (pre && !preParents.includes(pre)) preParents.push(pre);
+  }
+  preParents.forEach(p => p.classList.add("remark-code-has-line-highlighted"));
+})(document);</script>
+
+<script>
+(function() {
+  var links = document.getElementsByTagName('a');
+  for (var i = 0; i < links.length; i++) {
+    if (/^(https?:)?\/\//.test(links[i].getAttribute('href'))) {
+      links[i].target = '_blank';
+    }
+  }
+})();
+</script>
+
+<script>
+slideshow._releaseMath = function(el) {
+  var i, text, code, codes = el.getElementsByTagName('code');
+  for (i = 0; i < codes.length;) {
+    code = codes[i];
+    if (code.parentNode.tagName !== 'PRE' && code.childElementCount === 0) {
+      text = code.textContent;
+      if (/^\\\((.|\s)+\\\)$/.test(text) || /^\\\[(.|\s)+\\\]$/.test(text) ||
+          /^\$\$(.|\s)+\$\$$/.test(text) ||
+          /^\\begin\{([^}]+)\}(.|\s)+\\end\{[^}]+\}$/.test(text)) {
+        code.outerHTML = code.innerHTML;  // remove <code></code>
+        continue;
+      }
+    }
+    i++;
+  }
+};
+slideshow._releaseMath(document);
+</script>
+<!-- dynamically load mathjax for compatibility with self-contained -->
+<script>
+(function () {
+  var script = document.createElement('script');
+  script.type = 'text/javascript';
+  script.src  = 'https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-MML-AM_CHTML';
+  if (location.protocol !== 'file:' && /^https?:/.test(script.src))
+    script.src  = script.src.replace(/^https?:/, '');
+  document.getElementsByTagName('head')[0].appendChild(script);
+})();
+</script>
+  </body>
+</html>
