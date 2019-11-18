@@ -4,7 +4,7 @@
     <title>Speeding things up</title>
     <meta charset="utf-8" />
     <meta name="author" content="John Trochta &amp; Dan Ovando" />
-    <meta name="date" content="2019-11-17" />
+    <meta name="date" content="2019-11-18" />
     <link href="libs/remark-css/default.css" rel="stylesheet" />
     <link href="libs/remark-css/default-fonts.css" rel="stylesheet" />
   </head>
@@ -16,7 +16,7 @@ class: center, middle, inverse, title-slide
 ## FSH 507 Fall 2019
 ### John Trochta &amp; Dan Ovando
 ### SAFS, UW
-### 2019-11-17
+### 2019-11-18
 
 ---
 
@@ -45,31 +45,51 @@ class: center, middle
 _Gotta get this video working or find some other visual. Basically bring up running thousands of simulations_
 
 ---
-.pull-left[
+class: left, top
 # In this class:
 
-What is parallelization?
+### How does parallelization occur?
 
-How does parallelization occur?
+### Parallelizing in R with focus on `doParallel`
 
-Parallelizing in R with focus on `doParallel`
+### Other tricks for speeding up: `profvis`, `Rcpp`, &amp; Google Virtual Machines
 
-Other tricks: `profvis`, `Rcpp`, &amp; Google Virtual Machines
-]
-
---
-
-.pull-right[
-# By the end of class:
-
-Run code in parallel using `foreach`
-
-
-]
+### At the very least, set up parallelization on your own machine &amp; introduce resources for further efficiency improvements
 
 ---
 class: left, top
-# Key terms
+# Acknowledgments:
+
+Materials for this lecture drawn from:
+
+[Jonathan Dursi's Beyond Single-Core R](https://ljdursi.github.io/beyond-single-core-R/#/)
+
+[Matt Jones' Quick Intro to Parallel Computing in R](Quickhttps://nceas.github.io/oss-lessons/parallel-computing-in-r/parallel-computing-in-r.html)
+
+[`doParallel` vignette](https://cran.r-project.org/web/packages/doParallel/vignettes/gettingstartedParallel.pdf)
+
+---
+class: left, top
+
+# Why parallelism? Boils down to 3 reasons:
+
+1. Code too SLOW
+
+2. Problem too BIG
+
+3. Tasks too MANY
+
+#### Modern processor architectures accomodate multiple **cores** and **processors**
+
+&lt;img src="https://media.giphy.com/media/7XsFGzfP6WmC4/giphy.gif" style="display: block; margin: auto;" /&gt;
+???
+_Splitting the problem up onto multiple cores, or rather more computers will grant access to enough memory to run effectively_
+_One task takes reasonable amount of time, but I have to run thousands_
+_Splitting tasks may improve efficiency_
+
+---
+class: left, top
+# The Hardware
 
 .pull-left[
 - Node: A single motherboard, with possibly multiple sockets
@@ -84,10 +104,26 @@ class: left, top
 .pull-right[
 &lt;img src="images/sockets-cores.png" width="150%" style="display: block; margin: auto;" /&gt;
 ]
-.footnote[Materials drawn from [Beyond Single-Core R](https://ljdursi.github.io/beyond-single-core-R/#/)]
 
-???
-_Can use multiple cores, multiple processes, or both_
+---
+class: left, top
+# The Hardware
+
+.pull-left[
+What this means for you?
+
+Say your computer has a quad-core processor, then you can execute 4 computations in parallel
+
+
+My 2018 MacBook Pro
+&lt;img src="images/my-macbook-cpus.jpg" width="100%" style="display: block; margin: auto;" /&gt;
+6 CPUs x 2 cores = 12 cores for computation
+]
+
+.pull-right[
+&lt;img src="images/sockets-cores.png" width="150%" style="display: block; margin: auto;" /&gt;
+]
+
 ---
 class: left, top
 # Processes and threads:
@@ -104,23 +140,8 @@ class: left, top
 .pull-right[
 &lt;img src="images/process-threads.png" width="1064" style="display: block; margin: auto;" /&gt;
 ]
-
----
-class: center, top
-
-# Why parallelism? Boils down to 3 reasons:
-
-##  1. Code too SLOW
-
-##  2. Problem too BIG
-
-##  3. Tasks too MANY
-
-&lt;img src="https://media.giphy.com/media/7XsFGzfP6WmC4/giphy.gif" style="display: block; margin: auto;" /&gt;
 ???
-_Splitting the problem up onto multiple cores, or rather more computers will grant access to enough memory to run effectively_
-_One task takes reasonable amount of time, but I have to run thousands_
-_Splitting tasks may improve efficiency_
+_Can use multiple cores, multiple processes, or both_
 
 ---
 class: left, top
@@ -165,13 +186,21 @@ class: left, top
 $$
 T \approx \left ( f + \frac{1 - f}{P} \right )
 $$
+???
+_It’s not as simple as it may seem._
+_While in theory each added processor would linearly increase the throughput of a computation, there is overhead that reduces that efficiency._
+_For example, the code and, importantly, the data need to be copied to each additional CPU, and this takes time and bandwidth._
+_Plus, new processes and/or threads need to be created by the operating system, which also takes time._
+_This overhead reduces the efficiency enough that realistic performance gains are much less than theoretical, and usually do not scale linearly as a function of processing power._
+_For example, if the time that a computation takes is short, then the overhead of setting up these additional resources may actually overwhelm any advantages of the additional processing power, and the computation could potentially take longer!_
+_In addition, not all of a task can be parallelized_
 ---
 class: center, top
 # Rationale: Amdal's Law
 $$
 T \approx \left ( f + \frac{1 - f}{P} \right )
 $$
-&lt;img src="Speeding_things_up_files/figure-html/unnamed-chunk-7-1.png" width="60%" style="display: block; margin: auto;" /&gt;
+&lt;img src="Speeding_things_up_files/figure-html/unnamed-chunk-9-1.png" width="60%" style="display: block; margin: auto;" /&gt;
 
 ---
 class: center, middle
@@ -215,7 +244,7 @@ _This overhead means that we want to launch jobs that take a significant length 
 class: left, top
 # Spawning in `snow`
 .pull-left[
-- `multicore` creates entirely new processes
+- `snow` creates entirely new processes
 
 - Need to explicitly copy data &amp; functions
 
@@ -233,11 +262,14 @@ _the flipside of the downside: new processes don't have any unneeded data, less 
 class: left, top
 # `multicore` and `snow`
 - Simplest use of `multicore` is through
+
   1. `mcparallel()` which forks a task ('task parallelism')
+  
   2. `mccollect()` which gets result
+  
   3. `mcapply()` the multicore equivalent of `lapply` ('data parallelism')
 
-- Further details &amp; examples at [Beyond Single-Core R](https://ljdursi.github.io/beyond-single-core-R/#/)]
+- Further details &amp; examples at [Beyond Single-Core R](https://ljdursi.github.io/beyond-single-core-R/#/)
 
 - Turn focus now to `doParallel`
 
@@ -389,7 +421,7 @@ which will do the right thing even if foreach gives it a whole wack of new resul
 class: left, top
 # Nesting `foreach`
 
-There's one more operator: `%:%`.  This lets you compose or nest foreach objects:
+- There's one more operator: `%:%`.  This lets you compose or nest foreach objects:
 
 ```r
 foreach (i=1:3, .combine="c") %:% 
@@ -401,22 +433,348 @@ foreach (i=1:3, .combine="c") %:%
 ```
 ## [1] 1 2 3 2 4 6 3 6 9
 ```
+
 ---
 class: left, top
-# Nesting `foreach`
+# Other tips with `foreach` &amp; `doParallel`
 
-There's one more operator: `%:%`.  This lets you compose or nest foreach objects:
+Can suffer same inefficiencies as a `for` loop if looping over MANY iterations
+
+for example:
 
 ```r
-foreach (i=1:3, .combine="c") %:% 
-  foreach (j=1:3, .combine="c") %do% {
-    i*j
+  ans &lt;- foreach (i=1:2000, .combine="+") %do% {
+    ...
+  }
+```
+creates a vector that takes memory
+
+---
+class: left, top
+# Other tips with `foreach` &amp; `doParallel`
+
+## Possible solution:
+
+Foreach has _iterators_ (e.g. `icount`) that can iterate through an object without creating something the size of the object.
+
+for example:
+
+```r
+  ans &lt;- foreach (i=icount(2000), .combine="+") %do% {
+    ...
   }
 ```
 
+---
+class: left, top
+# Other tips with `foreach` &amp; `doParallel`
+
+## Better solution:
+Avoid the intermediate index altogether because we don't care about `\(i\)`, we care about the data. So we either implicitly iterate:
+
+```r
+  ans &lt;- foreach (i=DATA$VARIABLE_1(2000), .combine="+") %do% {
+    ...
+  }
 ```
-## [1] 1 2 3 2 4 6 3 6 9
+
+---
+class: left, top
+# Other tips with `foreach` &amp; `doParallel`
+
+## Better solution:
+OR explicitly iterate by 'chunking:
+
+```r
+  ans &lt;- foreach (i=iter(DATA$VARIABLE_1(2000),chunksize=500),
+                  .combine="+") %do% {}
 ```
+OR even by row, column, etc if your object is a matrix or data frame
+
+```r
+  ans &lt;- foreach (i=iter(DATA_MATRIX,by="row"), .combine="+") %do% {}
+```
+This works in parallel too.
+
+---
+class: left, top
+# Other tips with `foreach` &amp; `doParallel`
+
+Chunking is just one of several ways `foreach` adjusts the iteration scheduling
+
+For instance, you can use options from `multicore` (if using a `multicore` cluster)
+
+```r
+foreach( ..., .options.multicore=list(preschedule=FALSE,set.seed=TRUE))
+```
+
+Another is if you don't care about the order that the results come back in, use:
+
+```r
+foreach( ..., .inorder=FALSE)
+```
+to allow flexibility in sending out tasks (otherwise, first result is ALWAYS from first iteration, etc.)
+
+---
+class: left, top
+# Summary of `foreach`
+
+Since it is a wrapper for `multicore` &amp; `snow`, it inherits pros &amp; cons of each
+
+I prefer to use it because:
+
+1. I (perhaps naively) rely on `for` loops already making the transition easy
+
+2. You don't have to commit to `multicore` or `snow`; just switch to either in `doParallel` by registering the backend
+
+3. You can incrementally improve code performance
+
+---
+class: left, top
+# Best practices
+
+## Don't reinvent wheels
+
+There's no one-size-fits-all-analysis approach to taking advantage of multiple processors or nodes
+
+Check to see if there already exists packages for doing your analysis in parallel.
+
+For a complete list checkout
+[http://cran.r-project.org/web/views/HighPerformanceComputing.html](http://cran.r-project.org/web/views/HighPerformanceComputing.html)
+
+.footnote[from [Beyond Single-Core R by Jonathan Dursi](https://ljdursi.github.io/beyond-single-core-R/#/)]
+
+---
+class: left, top
+# Best practices
+
+## Big chunks better than little chunks
+
+Makes for much more efficient coding (recall Amdahl's Law)
+
+_E.g._ running each cross-validation fold on a different processor VS running them sequentially but with parts of the training method parallelized.
+
+.footnote[from [Beyond Single-Core R by Jonathan Dursi](https://ljdursi.github.io/beyond-single-core-R/#/)]
+
+---
+class: left, top
+# Best practices (again from [Beyond Single-Core R by Jonathan Dursi](https://ljdursi.github.io/beyond-single-core-R/#/))
+
+## Parallelism boosts computational power
+
+For throwing more cores at the problem to help, the calculation has to have been limited by compute power
+(some analyses, such as **I/O bound computations**-completion time determined by amount of time spent reading/writing from disk-or **network-bound**-timed determined by transfer-,can actually perform worse)
+
+---
+class: left, top
+# Best practices (again from [Beyond Single-Core R by Jonathan Dursi](https://ljdursi.github.io/beyond-single-core-R/#/))
+
+## One task per core, no more
+
+CPU-bound (time to completion determined by speed of central processor) computations slow down if something else is sharing the processor with them.
+
+Except for debugging(?), best not to run `doParallel` with more cores than you
+have on your computer _(never actually tried)_.
+
+---
+class: left, top
+# Best practices (again from [Beyond Single-Core R by Jonathan Dursi](https://ljdursi.github.io/beyond-single-core-R/#/))
+
+## Don't trip over your own feet
+
+Because you only want one task for core, be careful about accidentally using parallelism (mostly with higher-level packages)
+
+_e.g._ If you're 
+- doing four tasks at once with multicore on your laptop, and
+- Each of those tasks calls a routine with "baked-in" parallelism to launch 4 threads
+
+Now you're competing with yourself for your own laptop's cores.
+
+---
+class: center, middle
+# Other tricks for speeding up
+
+---
+class: left, top
+# `profvis` package
+
+interactive graphical interface for `Rprof`, R's built-in profiling tool
+
+[`profvis` tutorial](https://rstudio.github.io/profvis/index.html)
+
+---
+class: left, top
+# `Rcpp` package
+
+- Parallelization can only go so far
+
+--
+
+- Bottlenecks can be fixed by using lower level languages to rewrite key functions
+
+--
+
+- However, writing C or Fortrain for use in R is a pain on its own (even if you are fluent)
+
+--
+
+- Enter `Rcpp`
+
+---
+class: left, top
+# `Rcpp` package
+
+Typical bottlenecks:
+
+- Loops where each iteration depends on previous one (i.e. cannot be vectorized)
+
+- Functions called many, many times (talking millions); overhead on C++ functions much lower
+
+- Advanced data structures and algorithms that R doesn't provide
+
+---
+class: left, top
+# `Rcpp` package
+
+Installing &amp; loading the package isn't enough
+
+```r
+library(Rcpp)
+```
+
+You will all need to install a C++ compiler. To do so:
+
+- On Windows, install Rtools.
+
+- On Mac, install Xcode from the app store.
+
+- On Linux, `sudo apt-get install r-base-dev` or similar.
+
+???
+I do not evaluate any of the Rcpp code below to avoid errors on others' machines
+
+---
+class: left, top
+# the `cppFunction()`
+
+Allows you to write C++ functions in R, e.g.:
+
+
+```r
+cppFunction('int add(int x, int y, int z) {
+  int sum = x + y + z;
+  return sum;
+}')
+```
+
+`Rcpp` compiles this &amp; constructs an R function connecting to the compiled function:
+
+
+```r
+add(1, 2, 3)
+```
+
+???
+When you run this code, Rcpp will compile the C++ code and construct an R function that connects to the compiled C++ function. There’s a lot going on underneath the hood but Rcpp takes care of all the details so you don’t need to worry about them.
+
+---
+class: left, top
+# the `sourceCpp()`
+
+`cppFunction()` simplifies presentation, but not typically useful
+
+Use `sourceCpp` to source stand-alone C++ file into R for use
+
+One thing to note is that the C++ file should prefixed with:
+
+```r
+// [[Rcpp::export]]
+```
+
+---
+class: left, top
+# the `sourceCpp()`
+
+`cppFunction()` simplifies presentation, but not typically useful
+
+Use `sourceCpp` to source stand-alone C++ file into R for use:
+
+```r
+sourceCpp("MyFunction.cpp")
+```
+
+---
+class: left, top
+# Example C++ file - calculating the mean
+
+```r
+#include &lt;Rcpp.h&gt;
+using namespace Rcpp;
+
+// [[Rcpp::export]]
+double meanC(NumericVector x) {
+  int n = x.size();
+  double total = 0;
+
+  for(int i = 0; i &lt; n; ++i) {
+    total += x[i];
+  }
+  return total / n;
+}
+```
+
+One thing to note is that the C++ file should prefixed with:
+
+```r
+// [[Rcpp::export]]
+```
+
+---
+class: left, top
+# Example C++ file - calculating the mean
+
+R code can be embedded in special comment blocks - good for running test code
+
+The following implements `meanC` and compares to the built-in `mean()`
+
+```r
+#include &lt;Rcpp.h&gt;
+using namespace Rcpp;
+
+// [[Rcpp::export]]
+double meanC(NumericVector x) {
+  int n = x.size();
+  double total = 0;
+  for(int i = 0; i &lt; n; ++i) {total += x[i];}
+  return total / n;
+}
+/*** R
+x &lt;- runif(1e5)
+bench::mark(mean(x),meanC(x))
+*/
+```
+
+---
+class: left, top
+# `Rcpp` and C++
+
+Check out [Chapter 25 in Advanced R](https://adv-r.hadley.nz/rcpp.html#sourceCpp) for more on `Rcpp`
+
+There he mentions some good references to learn C++ for free:
+
+http://www.learncpp.com/
+
+https://en.cppreference.com/w/cpp
+
+---
+class: left, top
+# Yet to cover
+
+- Excercises
+- Intro to Cloud services (broad overview &amp; re-direct to UW resources)
+- cluster of computer/psocket
+- more detailed package setup
+- flock
     </textarea>
 <style data-target="print-only">@media screen {.remark-slide-container{display:block;}.remark-slide-scaler{box-shadow:none;}}</style>
 <script src="https://remarkjs.com/downloads/remark-latest.min.js"></script>
