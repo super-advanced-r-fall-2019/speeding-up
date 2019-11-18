@@ -99,6 +99,8 @@ class: left, top
 - Core: the unit of computation; often has hardware support for
 
 - Pseudo-cores: can appear to the OS as multiple cores but share much functionality between other pseudo-cores on the same core
+
+- Cluster: collection of objects capable of hosting cores (over a network or on a single machine)
 ]
 
 .pull-right[
@@ -129,7 +131,7 @@ class: left, top
 # Processes and threads:
 
 .pull-left[
-- Process: Data and code in memory
+- Process: Data and code in memory (i.e. a single running version of R or another program)
 
 - One or more **threads** of execution within a process
 
@@ -226,6 +228,7 @@ class: left, top
 - `multicore` starts new processes by forking
 
 - New processes see copy of original data, then fork new ones
+  - entire version of R is copied &amp; moved to new core
 
 - Memory is NOT shared
 
@@ -244,11 +247,11 @@ _This overhead means that we want to launch jobs that take a significant length 
 class: left, top
 # Spawning in `snow`
 .pull-left[
-- `snow` creates entirely new processes
+- `snow` creates entirely new processes (e.g. a new version of R) on each core
 
 - Need to explicitly copy data &amp; functions
 
-- Can be done remotely,
+- Can be done remotely since connection is done via networking
 ]
 .pull-right[
 &lt;img src="images/spawn-sm.png" width="90%" style="display: block; margin: auto;" /&gt;
@@ -257,6 +260,28 @@ class: left, top
 _A downside is that you need to explicitly copy over any needed data, functions._
 _But the upsides are that spawning a new process can be done on a remote machine, not just current machine. So you can in principle use entire clusters._
 _the flipside of the downside: new processes don't have any unneeded data, less total memory footprint._
+
+---
+class: left, top
+# Spawning VS Forking
+.pull-left[
+### Spawning (socket)
+- Pros
+  - Works on all OS, each process is unique so no cross-contamination
+  
+- Cons
+  - Each process is unique so slower, **package loading needs to be done in each process**, **variables defined in main version of R don't automatically exist on each core**
+]
+.pull-right[
+### Forking
+- Pros
+  - Faster than socket, copies existing R &amp; entire workspace, easy to implement
+  
+- Cons
+  - Only works on certain OS (Mac, Linux, Unix), can cause specific issues with RNG's (?)
+]
+
+.footnote[from [Parallel Processing in R](http://dept.stat.lsa.umich.edu/~jerrick/courses/stat701/notes/parallel.html)]
 
 ---
 class: left, top
@@ -362,7 +387,47 @@ foreach (i=1:3) %dopar% sqrt(i)
 ```
 
 ```r
-stopImplicitCluster()
+stopImplicitCluster() # used to close implicit clusters
+```
+
+---
+class: left, top
+# Key functions
+
+- `detectCores()`: returns # of cores you have access to for computation
+
+- `makeCluster()`: creates the cluster (i.e. set of copies of R) that run in parallel &amp; communicate over sockets (potentially)
+
+- `registerDoParallel()`: registers parallel backend for `foreach`
+
+
+```r
+ncores &lt;- detectCores() - 1
+
+# Make it a socket cluster - DEFAULT
+cl &lt;- makeCluster(ncores, type='PSOCK')
+
+# Make it a forking cluster
+cl &lt;- makeCluster(ncores, type='FORK')
+
+registerDoParallel(cl)
+```
+
+---
+class: left, top
+# Key functions
+
+`stopCluster(cl)`
+Shuts down the processes (i.e. quitting each R). Best practice to use, supposedly unnecessary if you exit R (which automatically closes everything). If not stopped, the processes continue running &amp; using resources causing slowing or delays.
+
+Supposedly weird things can still happen (cores remain in use, processes still run), so use this to draw out those creepers in the shadows:
+
+```r
+unregister &lt;- function() {
+    env &lt;- foreach:::.foreachGlobals
+    rm(list=ls(name=env), pos=env)
+}
+unregister()
 ```
 
 ---
@@ -517,6 +582,32 @@ to allow flexibility in sending out tasks (otherwise, first result is ALWAYS fro
 
 ---
 class: left, top
+# Other tips with `foreach` &amp; `doParallel`
+
+Some (or many) times you will want to save much more than can be returned by `foreach` (e.g. multiple files).
+
+--
+
+You can write files from within `foreach` **BUT** make sure you save in new directory created in each new process
+
+--
+
+Sometimes you want to externally write to the same file from within `foreach` with `%dopar%`, but separate processes that simultaneously attempt to open a file will crash parallelization
+
+--
+
+Use `flock` package
+
+```r
+library(flock)
+
+locked &lt;- lock("directory/file.dat")
+write.table(X,file="file.csv",append=TRUE)
+unlock(locked)
+```
+
+---
+class: left, top
 # Summary of `foreach`
 
 Since it is a wrapper for `multicore` &amp; `snow`, it inherits pros &amp; cons of each
@@ -558,16 +649,18 @@ _E.g._ running each cross-validation fold on a different processor VS running th
 
 ---
 class: left, top
-# Best practices (again from [Beyond Single-Core R by Jonathan Dursi](https://ljdursi.github.io/beyond-single-core-R/#/))
+# Best practices
 
 ## Parallelism boosts computational power
 
 For throwing more cores at the problem to help, the calculation has to have been limited by compute power
 (some analyses, such as **I/O bound computations**-completion time determined by amount of time spent reading/writing from disk-or **network-bound**-timed determined by transfer-,can actually perform worse)
 
+.footnote[from [Beyond Single-Core R by Jonathan Dursi](https://ljdursi.github.io/beyond-single-core-R/#/)]
+
 ---
 class: left, top
-# Best practices (again from [Beyond Single-Core R by Jonathan Dursi](https://ljdursi.github.io/beyond-single-core-R/#/))
+# Best practices
 
 ## One task per core, no more
 
@@ -576,9 +669,11 @@ CPU-bound (time to completion determined by speed of central processor) computat
 Except for debugging(?), best not to run `doParallel` with more cores than you
 have on your computer _(never actually tried)_.
 
+.footnote[from [Beyond Single-Core R by Jonathan Dursi](https://ljdursi.github.io/beyond-single-core-R/#/)]
+
 ---
 class: left, top
-# Best practices (again from [Beyond Single-Core R by Jonathan Dursi](https://ljdursi.github.io/beyond-single-core-R/#/))
+# Best practices
 
 ## Don't trip over your own feet
 
@@ -590,6 +685,35 @@ _e.g._ If you're
 
 Now you're competing with yourself for your own laptop's cores.
 
+.footnote[from [Beyond Single-Core R by Jonathan Dursi](https://ljdursi.github.io/beyond-single-core-R/#/)]
+
+---
+# **Exercise**: Remember Using Catch to Predict Status?
+
+Costello et al. 2012 used a regression of catch + life history to predict B/Bmsy
+
+Let's give it a try ourselves (in way fewer lines of code than the original)
+
+1. Load in data and tidy it up
+
+2. Test out some candidate regressions, select best
+
+3. Test regressions on actual out-of-sample prediction
+  - is "best" still best?
+
+Data are in `here::here("data","ram_timeseries.csv")`
+
+---
+# **Exercise**: Remember Using Catch to Predict Status?
+
+**4. Bootstrap your "best" model for 10,000 iterations to obtain 95% CI on the regression coefficient using `foreach`.** 
+Try with and without parallel, and compare times
+
+--
+**5. Bootstrap N-2 candidate regressions (N = total available cores on your laptop) for 10,000 iterations to obtain 95% CI on each of the regression coefficients.**
+
+**6. Output a single file that summarizes: model selection results, out-of-sample predictions, estimated coefficient with Lower and Upper bounds of the CI, and the time the model took**
+
 ---
 class: center, middle
 # Other tricks for speeding up
@@ -598,9 +722,18 @@ class: center, middle
 class: left, top
 # `profvis` package
 
-interactive graphical interface for `Rprof`, R's built-in profiling tool
+- Interactive graphical interface for `Rprof`, R's built-in profiling tool
 
-[`profvis` tutorial](https://rstudio.github.io/profvis/index.html)
+- [`profvis` tutorial](https://rstudio.github.io/profvis/index.html)
+
+- You can also profile code without `profvis`
+
+  - From RStudio, select 'Profile'-&gt;'Start Profiling'
+  
+  - Run your code
+  
+  - Then select 'Profile'-&gt;'Stop Profiling' (graph automatically pops up)
+  
 
 ---
 class: left, top
@@ -768,13 +901,62 @@ https://en.cppreference.com/w/cpp
 
 ---
 class: left, top
-# Yet to cover
+# **Exercise**: 'Speeding up' your own code
 
-- Excercises
-- Intro to Cloud services (broad overview &amp; re-direct to UW resources)
-- cluster of computer/psocket
-- more detailed package setup
-- flock
+Try install prof.vis &amp; run on your own R code from research, work, fun(??)
+
+```r
+install.packages("profvis")
+
+profvis({
+  # Your code...
+})
+```
+
+---
+class: left, top
+# Cloud computing
+
+Despite expanding the bounds, we always seem to catch up 
+
+You can find yourself still trapped by the multi-core processing power of your personal laptop, lab's desktop, etc. 
+
+The easiest and cheapest next step is through the cloud....
+
+---
+class: left, top
+# Cloud computing
+
+The cloud contains on demand _virtual machines_ (an emulation of a computer running inside another computer)
+
+_Virtual machines_ can perform all &amp; more of same operations as your own computer, and may even share same OS or internal architecture
+
+To access _virtual machines_ within the cloud, all you need is internet connection, browser, and cash (ha)
+
+Microsoft, Amazon Web Services, and Google are provide their own clouds (apparently RStudio has its own cloud service too, but has narrowly focused applications such as for teaching)
+
+---
+class: left, top
+# Cloud computing
+
+- Tutorial &amp; instructions to set up free trial with Google Cloud Platform: [Cloud computing with Google Compute Engine](https://raw.githack.com/uo-ec607/lectures/master/14-gce/14-gce.html#introduction)
+
+- UW IT's cloud computing webpage: 
+
+  - [Cloud computing basics](https://itconnect.uw.edu/research/cloud-computing-for-research/cloud-computing-basics/)
+
+  - [Getting started](https://itconnect.uw.edu/research/cloud-computing-for-research/getting-started/)
+  - UW IT provides consulting &amp; support for use of cloud computing services
+
+- Consider joining the [Research Computing Club](https://depts.washington.edu/uwrcc/)
+
+  - Grants you access to [Hyak](https://uw.service-now.com/sp?id=sc_entry&amp;sys_id=bbcd76e1db12bb8037ae9ec6db961948&amp;sysparm_category=d103f865dba2bf40d6a77a8eaf9619b2), UW's own supercomputer, and the [Cloud Credit Program](http://depts.washington.edu/uwrcc/getting-started-2/cloud-computing/)
+  
+  - you must submit an application for the Cloud Credit Program, but applications for credits under $500 are approved ASAP (funded by the Student Technology Fund)
+  
+  - Pro: the only requirement is to attend one club event a year
+  
+  - Con: several hoops to jump through &amp; steep learning curve especially with Hyak - the payoff may be worth it though!
     </textarea>
 <style data-target="print-only">@media screen {.remark-slide-container{display:block;}.remark-slide-scaler{box-shadow:none;}}</style>
 <script src="https://remarkjs.com/downloads/remark-latest.min.js"></script>
