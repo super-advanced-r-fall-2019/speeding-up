@@ -104,6 +104,10 @@ Materials for this lecture drawn from:
 
 [`doParallel` vignette](https://cran.r-project.org/web/packages/doParallel/vignettes/gettingstartedParallel.pdf)
 
+[Advanced R, 2nd Edition by Hadley Wickham](https://adv-r.hadley.nz)
+
+[Josh Errickson's Parallel Processing in R](http://dept.stat.lsa.umich.edu/~jerrick/courses/stat701/notes/parallel.html)
+
 ---
 class: left, top
 
@@ -115,7 +119,7 @@ class: left, top
 
 3. Tasks too MANY
 
-#### Modern processor architectures accomodate multiple **cores** and **processors**
+Modern processor architectures accomodate multiple **cores** and **processors**
 
 ```{r}
 knitr::include_graphics("https://media.giphy.com/media/7XsFGzfP6WmC4/giphy.gif")
@@ -155,6 +159,7 @@ class: left, top
 What this means for you?
 
 Say your computer has a quad-core processor, then you can execute 4 computations in parallel
+
 
 
 My 2018 MacBook Pro
@@ -288,7 +293,7 @@ class: left, top
 - `multicore` starts new processes by forking
 
 - New processes see copy of original data, then fork new ones
-  - entire version of R is copied & moved to new core
+  - E.g. entire version of R is copied & moved to new core
 
 - Memory is NOT shared
 
@@ -329,18 +334,16 @@ _the flipside of the downside: new processes don't have any unneeded data, less 
 class: left, top
 # Spawning VS Forking
 .pull-left[
-### Spawning (socket)
+**Spawning (socket)**
 - Pros
   - Works on all OS, each process is unique so no cross-contamination
-  
 - Cons
   - Each process is unique so slower, **package loading needs to be done in each process**, **variables defined in main version of R don't automatically exist on each core**
 ]
 .pull-right[
-### Forking
+**Forking**
 - Pros
   - Faster than socket, copies existing R & entire workspace, easy to implement
-  
 - Cons
   - Only works on certain OS (Mac, Linux, Unix), can cause specific issues with RNG's (?)
 ]
@@ -453,7 +456,7 @@ class: left, top
 `stopCluster(cl)`
 Shuts down the processes (i.e. quitting each R). Best practice to use, supposedly unnecessary if you exit R (which automatically closes everything). If not stopped, the processes continue running & using resources causing slowing or delays.
 
-Supposedly weird things can still happen (cores remain in use, processes still run), so use this to draw out those creepers in the shadows:
+Supposedly weird things can still happen (cores remain in use, processes still run), so use this to shut down those power hogs:
 ```{r eval=FALSE, echo=TRUE}
 unregister <- function() {
     env <- foreach:::.foreachGlobals
@@ -532,7 +535,7 @@ for example:
 class: left, top
 # Other tips with `foreach` & `doParallel`
 
-## Better solution:
+## Better solutions:
 Avoid the intermediate index altogether because we don't care about $i$, we care about the data. So we either implicitly iterate:
 ```{r eval=FALSE,echo=TRUE}
   ans <- foreach (i=DATA$VARIABLE_1(2000), .combine="+") %do% {
@@ -544,7 +547,7 @@ Avoid the intermediate index altogether because we don't care about $i$, we care
 class: left, top
 # Other tips with `foreach` & `doParallel`
 
-## Better solution:
+## Better solutions:
 OR explicitly iterate by 'chunking:
 ```{r eval=FALSE,echo=TRUE}
   ans <- foreach (i=iter(DATA$VARIABLE_1(2000),chunksize=500),
@@ -618,7 +621,7 @@ class: left, top
 
 ## Don't reinvent wheels
 
-There's no one-size-fits-all-analysis approach to taking advantage of multiple processors or nodes
+There's no one-size-fits-all-analysis approach to taking advantage of multiple processors or nodes.
 
 Check to see if there already exists packages for doing your analysis in parallel.
 
@@ -633,9 +636,9 @@ class: left, top
 
 ## Big chunks better than little chunks
 
-Makes for much more efficient coding (recall Amdahl's Law)
+Makes for much more efficient coding (recall Amdahl's Law).
 
-_E.g._ running each cross-validation fold on a different processor VS running them sequentially but with parts of the training method parallelized.
+_E.g. running each cross-validation fold on a different processor VS running them sequentially but with parts of the training method parallelized._
 
 .footnote[from [Beyond Single-Core R by Jonathan Dursi](https://ljdursi.github.io/beyond-single-core-R/#/)]
 
@@ -645,8 +648,9 @@ class: left, top
 
 ## Parallelism boosts computational power
 
-For throwing more cores at the problem to help, the calculation has to have been limited by compute power
-(some analyses, such as **I/O bound computations**-completion time determined by amount of time spent reading/writing from disk-or **network-bound**-timed determined by transfer-,can actually perform worse)
+For throwing more cores at the problem to help, the calculation has to have been limited by compute power.
+
+_Some analyses, such as **I/O bound computations**-completion time determined by amount of time spent reading/writing from disk-or **network-bound**-timed determined by transfer-,can actually perform worse)_
 
 .footnote[from [Beyond Single-Core R by Jonathan Dursi](https://ljdursi.github.io/beyond-single-core-R/#/)]
 
@@ -688,23 +692,27 @@ Let's give it a try ourselves (in way fewer lines of code than the original)
 
 1. Load in data and tidy it up
 
-2. Test out some candidate regressions, select best
+~~2. Test out some candidate regressions, select best~~
 
-3. Test regressions on actual out-of-sample prediction
-  - is "best" still best?
+~~3. Test regressions on actual out-of-sample prediction~~
+  
+**2. Test out some candidate regressions & select best with and without parallelization**
 
 Data are in `here::here("data","ram_timeseries.csv")`
 
 ---
 # **Exercise**: Remember Using Catch to Predict Status?
 
-**4. Bootstrap your "best" model for 10,000 iterations to obtain 95% CI on the regression coefficient using `foreach`.** 
+_If time allows_
+
+3. Bootstrap your "best" model for 10,000 iterations to obtain 95% CI on the regression coefficient using `foreach`.
 Try with and without parallel, and compare times
 
 --
-**5. Bootstrap N-2 candidate regressions (N = total available cores on your laptop) for 10,000 iterations to obtain 95% CI on each of the regression coefficients.**
 
-**6. Output a single file that summarizes: model selection results, out-of-sample predictions, estimated coefficient with Lower and Upper bounds of the CI, and the time the model took**
+4. Bootstrap N-2 candidate regressions (N = total available cores on your laptop) for 10,000 iterations to obtain 95% CI on each of the regression coefficients.
+
+5. Output a single file that summarizes: model selection results, out-of-sample predictions, estimated coefficient with Lower and Upper bounds of the CI, and the time the model took.
 
 ---
 class: center, middle
@@ -806,21 +814,13 @@ class: left, top
 `cppFunction()` simplifies presentation, but not typically useful
 
 Use `sourceCpp` to source stand-alone C++ file into R for use
+```{r eval=FALSE, echo=TRUE}
+sourceCpp("MyFunction.cpp")
+```
 
 One thing to note is that the C++ file should prefixed with:
 ```{r eval=FALSE, echo=TRUE}
 // [[Rcpp::export]]
-```
-
----
-class: left, top
-# the `sourceCpp()`
-
-`cppFunction()` simplifies presentation, but not typically useful
-
-Use `sourceCpp` to source stand-alone C++ file into R for use:
-```{r eval=FALSE, echo=TRUE}
-sourceCpp("MyFunction.cpp")
 ```
 
 ---
@@ -840,11 +840,6 @@ double meanC(NumericVector x) {
   }
   return total / n;
 }
-```
-
-One thing to note is that the C++ file should prefixed with:
-```{r eval=FALSE, echo=TRUE}
-// [[Rcpp::export]]
 ```
 
 ---
